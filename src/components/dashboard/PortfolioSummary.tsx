@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   ArrowUpIcon,
@@ -8,6 +8,7 @@ import {
   DollarSignIcon,
   PercentIcon,
   EditIcon,
+  RefreshCwIcon,
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
@@ -20,6 +21,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { subscribeToCoinsUpdates, unsubscribeFromCoinsUpdates } from "@/lib/coinService";
 
 interface MetricCardProps {
   title: string;
@@ -92,15 +94,46 @@ interface PortfolioSummaryProps {
   }[];
   cashReserves?: number;
   onUpdateCashReserves?: (newAmount: number) => void;
+  onRefreshData?: () => Promise<void>;
 }
 
 const PortfolioSummary = ({
   coins = [],
   cashReserves = 50000,
   onUpdateCashReserves,
+  onRefreshData,
 }: PortfolioSummaryProps) => {
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [newCashReserves, setNewCashReserves] = useState(cashReserves.toString());
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  
+  // Real-time updates subscription
+  useEffect(() => {
+    // Subscribe to real-time coin updates
+    const subscription = subscribeToCoinsUpdates(() => {
+      // The actual update of the coins array is handled in the parent component
+      // This subscription is just to be aware of updates for UI purposes
+      console.log("Coins updated in real-time");
+    });
+    
+    // Clean up subscription when component unmounts
+    return () => {
+      unsubscribeFromCoinsUpdates(subscription);
+    };
+  }, []);
+  
+  const refreshData = async () => {
+    setIsRefreshing(true);
+    try {
+      if (onRefreshData) {
+        await onRefreshData();
+      }
+    } catch (error) {
+      console.error("Failed to refresh data:", error);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
   
   // Calculate total portfolio value (cash reserves + current value of active coins + profit from sold coins)
   const activeCoinsValue = coins
@@ -166,9 +199,21 @@ const PortfolioSummary = ({
     <div className="w-full bg-background px-4 md:px-6">
       <div className="mb-4">
         <h2 className="text-2xl font-bold tracking-tight">Portfolio Summary</h2>
-        <p className="text-muted-foreground">
-          Overview of your rare coin investments
-        </p>
+        <div className="flex justify-between items-center">
+          <p className="text-muted-foreground">
+            Overview of your rare coin investments
+          </p>
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={refreshData} 
+            disabled={isRefreshing}
+            className="ml-auto"
+          >
+            <RefreshCwIcon className={`h-4 w-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} /> 
+            Refresh
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

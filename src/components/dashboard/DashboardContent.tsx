@@ -1,27 +1,19 @@
-import React, { useState, lazy, Suspense } from "react";
+import React, { useState, lazy, Suspense, useEffect, useCallback } from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Card } from "@/components/ui/card";
 import PortfolioSummary from "./PortfolioSummary";
 import CoinsList from "./CoinsList";
 import { User } from "lucide-react";
 import { toast } from "@/components/ui/use-toast";
-
-interface Coin {
-  id: string;
-  name: string;
-  image: string;
-  acquisitionDate: string;
-  purchasePrice: number;
-  currentValue: number;
-  roi: number;
-  description?: string;
-  grade?: string;
-  mint?: string;
-  year?: number;
-  isSold: boolean;
-  soldPrice?: number;
-  soldDate?: Date;
-}
+import { 
+  getAllCoins, 
+  addCoin, 
+  updateCoin, 
+  deleteCoin, 
+  subscribeToCoinsUpdates, 
+  unsubscribeFromCoinsUpdates,
+  Coin
+} from "@/lib/coinService";
 
 interface Transaction {
   id: string;
@@ -61,8 +53,49 @@ const DashboardContent = ({
     }
   ]);
   const [cashReserves, setCashReserves] = useState(50000);
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleMarkAsSold = (values: any) => {
+  // Function to refresh data from the server
+  const refreshData = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      // Fetch latest coins from the service
+      const latestCoins = await getAllCoins();
+      setCoins(latestCoins);
+      
+      toast({
+        title: "Data Refreshed",
+        description: "Latest coin data has been loaded",
+      });
+    } catch (error) {
+      console.error("Failed to refresh data:", error);
+      toast({
+        title: "Refresh Failed",
+        description: "Could not load the latest data",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  // Initialize data and set up real-time listeners
+  useEffect(() => {
+    // Initial data load
+    refreshData();
+    
+    // Set up real-time subscription
+    const subscription = subscribeToCoinsUpdates((updatedCoins) => {
+      setCoins(updatedCoins);
+    });
+    
+    // Clean up subscription when component unmounts
+    return () => {
+      unsubscribeFromCoinsUpdates(subscription);
+    };
+  }, [refreshData]);
+
+  const handleMarkAsSold = async (values: any) => {
     const coinIndex = coins.findIndex(coin => coin.id === values.coinId);
     
     if (coinIndex === -1) {
@@ -84,44 +117,84 @@ const DashboardContent = ({
     
     setCoins(updatedCoins);
     
-    toast({
-      title: "Success",
-      description: values.isSold 
-        ? `Coin marked as sold for $${values.soldPrice}` 
-        : "Coin marked as not sold",
-    });
+    // Send update to database service
+    try {
+      await updateCoin(updatedCoins[coinIndex]);
+      
+      toast({
+        title: "Success",
+        description: values.isSold 
+          ? `Coin marked as sold for $${values.soldPrice}` 
+          : "Coin marked as not sold",
+      });
+    } catch (error) {
+      console.error("Failed to update coin:", error);
+      toast({
+        title: "Update Failed",
+        description: "Could not update coin status",
+        variant: "destructive",
+      });
+    }
   };
 
-  const handleNewCoin = (data: any) => {
-    const newCoin: Coin = {
-      id: Date.now().toString(),
-      name: data.name,
-      image: data.image ? URL.createObjectURL(data.image) : "https://api.dicebear.com/7.x/shapes/svg?seed=" + Date.now(),
-      acquisitionDate: new Date().toISOString(),
-      purchasePrice: parseFloat(data.price),
-      currentValue: parseFloat(data.marketValue),
-      roi: 0,
-      isSold: false,
-      description: data.description,
-    };
+  const handleNewCoin = async (data: any) => {
+    try {
+      const coinData = {
+        name: data.name,
+        image: data.image ? URL.createObjectURL(data.image) : "https://api.dicebear.com/7.x/shapes/svg?seed=" + Date.now(),
+        acquisitionDate: new Date().toISOString(),
+        purchasePrice: parseFloat(data.price),
+        currentValue: parseFloat(data.marketValue),
+        roi: 0,
+        isSold: false,
+        description: data.description,
+        grade: data.grade,
+        mint: data.mint,
+        year: data.year ? parseInt(data.year) : undefined
+      };
 
-    setCoins(prevCoins => [...prevCoins, newCoin]);
-    
-    toast({
-      title: "Success",
-      description: "New coin added to your collection",
-    });
+      // Add to database and get back the coin with ID
+      const newCoin = await addCoin(coinData);
+      
+      // Update local state
+      setCoins(prevCoins => [...prevCoins, newCoin]);
+      
+      toast({
+        title: "Success",
+        description: "New coin added to your collection",
+      });
 
-    setActiveTab("holdings");
+      setActiveTab("holdings");
+    } catch (error) {
+      console.error("Failed to add coin:", error);
+      toast({
+        title: "Add Failed",
+        description: "Could not add new coin",
+        variant: "destructive",
+      });
+    }
   };
 
-  const handleDeleteCoin = (coinId: string) => {
-    setCoins(prevCoins => prevCoins.filter(coin => coin.id !== coinId));
-    
-    toast({
-      title: "Success",
-      description: "Coin has been deleted",
-    });
+  const handleDeleteCoin = async (coinId: string) => {
+    try {
+      // Delete from database
+      await deleteCoin(coinId);
+      
+      // Update local state
+      setCoins(prevCoins => prevCoins.filter(coin => coin.id !== coinId));
+      
+      toast({
+        title: "Success",
+        description: "Coin has been deleted",
+      });
+    } catch (error) {
+      console.error("Failed to delete coin:", error);
+      toast({
+        title: "Delete Failed",
+        description: "Could not delete the coin",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleUpdateCashReserves = (newAmount: number) => {
@@ -142,6 +215,7 @@ const DashboardContent = ({
           coins={coins} 
           cashReserves={cashReserves}
           onUpdateCashReserves={handleUpdateCashReserves}
+          onRefreshData={refreshData}
         />
       </div>
 
